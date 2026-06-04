@@ -90,7 +90,7 @@ jobs:
             -DLLVM_INCLUDE_TESTS=OFF `
             "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" `
             -DLIBCXX_SHARED_OUTPUT_NAME=libc++ `
-            -DLIBCXX_STATIC_OUTPUT_NAME=libc++_static
+            -DLIBCXX_STATIC_OUTPUT_NAME=c++_static
           cmake --build build/Release --config Release
           cmake --install build/Release --config Release
 
@@ -108,7 +108,7 @@ jobs:
             -DLLVM_INCLUDE_TESTS=OFF `
             "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" `
             -DLIBCXX_SHARED_OUTPUT_NAME=libc++ `
-            -DLIBCXX_STATIC_OUTPUT_NAME=libc++_static
+            -DLIBCXX_STATIC_OUTPUT_NAME=c++_static
           cmake --build build/Debug --config Debug
           cmake --install build/Debug --config Debug
 
