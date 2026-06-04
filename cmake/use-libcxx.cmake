@@ -10,7 +10,13 @@
 #   Option A — set LIBCXX_ROOT explicitly:
 #     set(LIBCXX_ROOT "C:/libcxx-windows-x64")
 #
-#   Option B — from the release zip (auto-detected when this file is inside the
+#   Option B — auto-download from a GitHub Release (downloaded once, cached):
+#     set(LIBCXX_GITHUB_REPO "owner/repo")
+#     # set(LIBCXX_VERSION       "latest")    # or a tag, e.g. "v20.1.6"
+#     # set(LIBCXX_ABI_NAMESPACE "__1")       # namespace to match in asset name
+#     # set(LIBCXX_DOWNLOAD_DIR  "...")        # cache dir (default: build/_deps/libcxx)
+#
+#   Option C — from the release zip (auto-detected when this file is inside the
 #              zip at  <root>/cmake/use-libcxx.cmake):
 #     # nothing to set — LIBCXX_ROOT is inferred automatically.
 #
@@ -26,18 +32,117 @@
 #
 # ---- Other variables ---------------------------------------------------------
 #
-#   LIBCXX_LINK_TYPE — "static" (default) or "shared"
+#   LIBCXX_LINK_TYPE      — "static" (default) or "shared"
+#   LIBCXX_ABI_NAMESPACE  — namespace to match when downloading (default: "__1")
 #
 
 cmake_minimum_required(VERSION 3.20)
 
 # =============================================================================
-# 1. Resolve LIBCXX_ROOT
+# 1. Auto-download helpers (download once, reuse from cache on later runs)
 # =============================================================================
 
-# 1a. Explicit from the user — nothing to do.
+function(_libcxx_query_github_release repo version abi_ns out_url out_tag)
+    if("${version}" STREQUAL "" OR "${version}" STREQUAL "latest")
+        set(_api "https://api.github.com/repos/${repo}/releases/latest")
+    else()
+        set(_api "https://api.github.com/repos/${repo}/releases/tags/${version}")
+    endif()
 
-# 1b. Auto-detect when this file sits inside a release zip.
+    set(_json_file "${LIBCXX_DOWNLOAD_DIR}/_release_info.json")
+    file(DOWNLOAD "${_api}" "${_json_file}"
+        STATUS _st
+        HTTPHEADER "Accept: application/vnd.github.v3+json"
+    )
+    list(GET _st 0 _code)
+    if(NOT _code EQUAL 0)
+        list(GET _st 1 _msg)
+        message(FATAL_ERROR "[use-libcxx] GitHub API error (${_api}): ${_msg}")
+    endif()
+
+    file(READ "${_json_file}" _json)
+    string(JSON _tag GET "${_json}" "tag_name")
+
+    string(JSON _n LENGTH "${_json}" "assets")
+    if(_n EQUAL 0)
+        message(FATAL_ERROR "[use-libcxx] Release ${_tag} has no assets")
+    endif()
+    math(EXPR _last "${_n} - 1")
+    set(_found FALSE)
+    foreach(_i RANGE 0 ${_last})
+        string(JSON _name GET "${_json}" "assets" ${_i} "name")
+        if(_name MATCHES "windows-x64-${abi_ns}\\.zip$")
+            string(JSON _dl GET "${_json}" "assets" ${_i} "browser_download_url")
+            set(${out_url} "${_dl}" PARENT_SCOPE)
+            set(${out_tag} "${_tag}" PARENT_SCOPE)
+            set(_found TRUE)
+            break()
+        endif()
+    endforeach()
+    if(NOT _found)
+        message(FATAL_ERROR
+            "[use-libcxx] No asset matching namespace '${abi_ns}' in release ${_tag}.\n"
+            "Available assets can be viewed at:\n"
+            "  https://github.com/${repo}/releases/tag/${_tag}")
+    endif()
+endfunction()
+
+macro(_libcxx_auto_download)
+    if(NOT DEFINED LIBCXX_DOWNLOAD_DIR)
+        set(LIBCXX_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/_deps/libcxx")
+    endif()
+    if(NOT DEFINED LIBCXX_ABI_NAMESPACE)
+        set(LIBCXX_ABI_NAMESPACE "__1")
+    endif()
+    file(MAKE_DIRECTORY "${LIBCXX_DOWNLOAD_DIR}")
+
+    # If a previous run already downloaded for this version+namespace, reuse it.
+    # _libcxx_resolved_tag.txt records the tag so we skip the API call too.
+    set(_tag_file "${LIBCXX_DOWNLOAD_DIR}/_resolved_${LIBCXX_ABI_NAMESPACE}.tag")
+    set(_need_query TRUE)
+
+    if(EXISTS "${_tag_file}")
+        file(READ "${_tag_file}" _cached_tag)
+        string(STRIP "${_cached_tag}" _cached_tag)
+        set(_cache "${LIBCXX_DOWNLOAD_DIR}/${_cached_tag}-${LIBCXX_ABI_NAMESPACE}")
+        if(EXISTS "${_cache}/include/c++/v1/__config")
+            set(LIBCXX_ROOT "${_cache}")
+            set(_need_query FALSE)
+        endif()
+    endif()
+
+    if(_need_query)
+        _libcxx_query_github_release(
+            "${LIBCXX_GITHUB_REPO}" "${LIBCXX_VERSION}"
+            "${LIBCXX_ABI_NAMESPACE}" _dl_url _dl_tag)
+
+        set(_cache "${LIBCXX_DOWNLOAD_DIR}/${_dl_tag}-${LIBCXX_ABI_NAMESPACE}")
+
+        if(NOT EXISTS "${_cache}/include/c++/v1/__config")
+            set(_zip "${LIBCXX_DOWNLOAD_DIR}/_libcxx_${_dl_tag}-${LIBCXX_ABI_NAMESPACE}.zip")
+            file(DOWNLOAD "${_dl_url}" "${_zip}" STATUS _st SHOW_PROGRESS)
+            list(GET _st 0 _code)
+            if(NOT _code EQUAL 0)
+                list(GET _st 1 _msg)
+                file(REMOVE "${_zip}")
+                message(FATAL_ERROR "[use-libcxx] Download failed: ${_msg}")
+            endif()
+            file(ARCHIVE_EXTRACT INPUT "${_zip}" DESTINATION "${_cache}")
+            file(REMOVE "${_zip}")
+        endif()
+
+        file(WRITE "${_tag_file}" "${_dl_tag}")
+        set(LIBCXX_ROOT "${_cache}")
+    endif()
+endmacro()
+
+# =============================================================================
+# 2. Resolve LIBCXX_ROOT
+# =============================================================================
+
+# 2a. Explicit from the user — nothing to do.
+
+# 2b. Auto-detect when this file sits inside a release zip.
 if(NOT DEFINED LIBCXX_ROOT)
     get_filename_component(_use_libcxx_dir "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
     get_filename_component(_use_libcxx_parent "${_use_libcxx_dir}/.." ABSOLUTE)
@@ -48,18 +153,26 @@ if(NOT DEFINED LIBCXX_ROOT)
     unset(_use_libcxx_parent)
 endif()
 
-# 1c. Validate.
+# 2c. Auto-download from GitHub (skipped entirely if cache is valid).
+if((NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
+   AND DEFINED LIBCXX_GITHUB_REPO)
+    _libcxx_auto_download()
+endif()
+
+# 2d. Validate.
 if(NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
     message(FATAL_ERROR
         "[use-libcxx] LIBCXX_ROOT is not set or invalid.\n"
-        "Set it to the directory containing include/ and lib/ from the release zip:\n"
-        "  cmake -DLIBCXX_ROOT=path/to/libcxx-windows-x64 ...")
+        "Either:\n"
+        "  -DLIBCXX_ROOT=path/to/libcxx-windows-x64\n"
+        "  -DLIBCXX_GITHUB_REPO=owner/repo          (auto-download)\n"
+        "  -DLIBCXX_GITHUB_REPO=owner/repo -DLIBCXX_VERSION=v20.1.6")
 endif()
 
 file(TO_CMAKE_PATH "${LIBCXX_ROOT}" LIBCXX_ROOT)
 
 # =============================================================================
-# 2. Defaults
+# 3. Defaults
 # =============================================================================
 
 if(NOT DEFINED LIBCXX_LINK_TYPE)
@@ -67,7 +180,7 @@ if(NOT DEFINED LIBCXX_LINK_TYPE)
 endif()
 
 # =============================================================================
-# 3. Require Clang
+# 4. Require Clang
 # =============================================================================
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -89,7 +202,7 @@ endif()
 set(_LIBCXX_CFG "$<IF:$<CONFIG:Debug>,Debug,Release>")
 
 # =============================================================================
-# 4. Per-target function
+# 5. Per-target function
 # =============================================================================
 
 function(target_use_libcxx target)
@@ -122,7 +235,7 @@ function(target_use_libcxx target)
 endfunction()
 
 # =============================================================================
-# 5. Global convenience macro
+# 6. Global convenience macro
 # =============================================================================
 
 macro(use_libcxx_globally)
