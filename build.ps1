@@ -1,23 +1,24 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Build LLVM libc++ for Windows (x64) using Clang-cl.
+    Build LLVM libc++ for Windows using Clang-cl.
     Produces both Debug and Release libraries in a single install tree.
 .PARAMETER LLVMTag
     LLVM git tag (default: "latest" → auto-detect newest release).
 .PARAMETER Arch
-    Target architecture (default: x64).
+    Target architecture: x64 or arm64 (default: x64).
+.PARAMETER ABINamespace
+    libc++ inline ABI namespace (default: __1). Must start with __.
 .PARAMETER Clean
     Remove existing build/install directories before building.
 .PARAMETER SkipClone
     Skip cloning LLVM source (use existing).
-.PARAMETER ABINamespace
-    libc++ inline ABI namespace (default: __1). Must start with __.
 .PARAMETER Package
     Create a zip archive of the install directory.
 #>
 param(
     [string]$LLVMTag       = "latest",
+    [ValidateSet("x64","arm64")]
     [string]$Arch          = "x64",
     [string]$ABINamespace  = "__1",
     [switch]$Clean,
@@ -54,11 +55,13 @@ $VS_PATH = (& $vsWhere -latest -property installationPath).Trim()
 Write-Host "VS path: $VS_PATH"
 
 # ---------- Set up MSVC developer environment ----------
-Write-Step "Setting up MSVC environment ($Arch)"
+# For ARM64 cross-compilation from x64 host, use amd64_arm64
+$vcArch = if ($Arch -eq "arm64") { "amd64_arm64" } else { $Arch }
+Write-Step "Setting up MSVC environment ($vcArch)"
 $vcvarsall = "$VS_PATH\VC\Auxiliary\Build\vcvarsall.bat"
 if (-not (Test-Path $vcvarsall)) { throw "vcvarsall.bat not found" }
 
-$envLines = cmd /c "`"$vcvarsall`" $Arch >nul 2>&1 && set"
+$envLines = cmd /c "`"$vcvarsall`" $vcArch >nul 2>&1 && set"
 foreach ($line in $envLines) {
     if ($line -match "^([^=]+)=(.*)$") {
         [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], "Process")
@@ -74,6 +77,12 @@ if (-not (Test-Path $CLANG_CL)) {
 if (-not $CLANG_CL) { throw "clang-cl not found" }
 Write-Host "Compiler: $CLANG_CL"
 & $CLANG_CL --version
+
+# ---------- Cross-compilation target ----------
+$targetTriple = switch ($Arch) {
+    "arm64" { "aarch64-pc-windows-msvc" }
+    default { "x86_64-pc-windows-msvc" }
+}
 
 # ---------- Clone LLVM ----------
 if (-not $SkipClone) {
@@ -94,8 +103,8 @@ if (-not $SkipClone) {
 $configs = @("Release", "Debug")
 
 foreach ($config in $configs) {
-    $BUILD_DIR    = "$ROOT\build\$config"
-    $TEMP_INSTALL = "$ROOT\install\_temp_$config"
+    $BUILD_DIR    = "$ROOT\build\$Arch\$config"
+    $TEMP_INSTALL = "$ROOT\install\_temp_${Arch}_$config"
 
     Write-Step "Configuring libc++ ($config, $Arch)"
     if ($Clean -and (Test-Path $BUILD_DIR)) {
@@ -108,6 +117,8 @@ foreach ($config in $configs) {
         "-B", $BUILD_DIR
         "-DCMAKE_C_COMPILER=clang-cl"
         "-DCMAKE_CXX_COMPILER=clang-cl"
+        "-DCMAKE_C_COMPILER_TARGET=$targetTriple"
+        "-DCMAKE_CXX_COMPILER_TARGET=$targetTriple"
         "-DCMAKE_BUILD_TYPE=$config"
         "-DCMAKE_INSTALL_PREFIX=$TEMP_INSTALL"
         "-DLLVM_ENABLE_RUNTIMES=libcxx"
@@ -139,16 +150,14 @@ Write-Step "Merging into multi-config layout"
 if (Test-Path $INSTALL_DIR) { Remove-Item -Recurse -Force $INSTALL_DIR }
 New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
 
-# Headers are identical between configs - take from Release
-Copy-Item -Recurse "$ROOT\install\_temp_Release\include" "$INSTALL_DIR\include"
+Copy-Item -Recurse "$ROOT\install\_temp_${Arch}_Release\include" "$INSTALL_DIR\include"
 
-# Share dir (CMake package config etc.)
-if (Test-Path "$ROOT\install\_temp_Release\share") {
-    Copy-Item -Recurse "$ROOT\install\_temp_Release\share" "$INSTALL_DIR\share"
+if (Test-Path "$ROOT\install\_temp_${Arch}_Release\share") {
+    Copy-Item -Recurse "$ROOT\install\_temp_${Arch}_Release\share" "$INSTALL_DIR\share"
 }
 
 foreach ($config in $configs) {
-    $src = "$ROOT\install\_temp_$config"
+    $src = "$ROOT\install\_temp_${Arch}_$config"
     New-Item -ItemType Directory -Path "$INSTALL_DIR\lib\$config" -Force | Out-Null
     Copy-Item "$src\lib\*" "$INSTALL_DIR\lib\$config\" -Recurse
 
@@ -158,9 +167,8 @@ foreach ($config in $configs) {
     }
 }
 
-# Cleanup temp installs
 foreach ($config in $configs) {
-    Remove-Item -Recurse -Force "$ROOT\install\_temp_$config"
+    Remove-Item -Recurse -Force "$ROOT\install\_temp_${Arch}_$config"
 }
 
 # ---------- Package ----------
@@ -173,8 +181,5 @@ if ($Package) {
     Write-Host "Package: $zipPath"
 }
 
-Write-Step "Done (LLVM $LLVMVersion, ABI namespace: $ABINamespace)"
+Write-Step "Done (LLVM $LLVMVersion, $Arch, ABI namespace: $ABINamespace)"
 Write-Host "Installed to: $INSTALL_DIR" -ForegroundColor Green
-Write-Host "  ABI namespace: $ABINamespace" -ForegroundColor Green
-Write-Host "  lib\Release\ - Release libraries" -ForegroundColor Green
-Write-Host "  lib\Debug\   - Debug libraries" -ForegroundColor Green

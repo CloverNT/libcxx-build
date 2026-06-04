@@ -24,7 +24,7 @@ jobs:
     outputs:
       llvm_tag: ${{ steps.ver.outputs.llvm_tag }}
       llvm_version: ${{ steps.ver.outputs.llvm_version }}
-      ns_matrix: ${{ steps.ns.outputs.matrix }}
+      matrix: ${{ steps.mat.outputs.matrix }}
     steps:
       - name: Resolve LLVM version
         id: ver
@@ -39,34 +39,35 @@ jobs:
           VER="${TAG#llvmorg-}"
           echo "llvm_tag=$TAG"     >> "$GITHUB_OUTPUT"
           echo "llvm_version=$VER" >> "$GITHUB_OUTPUT"
-          echo "Resolved: $TAG ($VER)"
 
-      - name: Build namespace matrix
-        id: ns
+      - name: Build matrix
+        id: mat
         shell: bash
         run: |
           RAW='${{ inputs.abi_namespaces }}'
           if [ -z "$RAW" ]; then RAW='["__qq", "__Cr"]'; fi
-          echo "matrix={\"abi_namespace\":$RAW}" >> "$GITHUB_OUTPUT"
+          echo "matrix={\"arch\":[\"x64\",\"arm64\"],\"abi_namespace\":$RAW}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
     runs-on: windows-latest
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.resolve.outputs.ns_matrix) }}
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
 
     env:
       LLVM_TAG: ${{ needs.resolve.outputs.llvm_tag }}
       LLVM_VER: ${{ needs.resolve.outputs.llvm_version }}
       NS: ${{ matrix.abi_namespace }}
+      ARCH: ${{ matrix.arch }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: ${{ matrix.arch == 'arm64' && 'amd64_arm64' || 'x64' }}
 
       - name: Install Ninja
         run: choco install ninja -y
@@ -76,12 +77,21 @@ jobs:
           git clone --depth 1 --branch ${{ env.LLVM_TAG }} `
             https://github.com/llvm/llvm-project.git llvm-project
 
+      - name: Set target triple
+        id: target
+        shell: pwsh
+        run: |
+          $triple = if ("${{ env.ARCH }}" -eq "arm64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
+          "triple=$triple" >> $env:GITHUB_OUTPUT
+
       - name: Build Release
         shell: pwsh
         run: |
           cmake -G Ninja `
             -S llvm-project/runtimes -B build/Release `
             -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_C_COMPILER_TARGET=${{ steps.target.outputs.triple }} `
+            -DCMAKE_CXX_COMPILER_TARGET=${{ steps.target.outputs.triple }} `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Release `
             -DLLVM_ENABLE_RUNTIMES=libcxx `
@@ -100,6 +110,8 @@ jobs:
           cmake -G Ninja `
             -S llvm-project/runtimes -B build/Debug `
             -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl `
+            -DCMAKE_C_COMPILER_TARGET=${{ steps.target.outputs.triple }} `
+            -DCMAKE_CXX_COMPILER_TARGET=${{ steps.target.outputs.triple }} `
             -DCMAKE_BUILD_TYPE=Debug `
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Debug `
             -DLLVM_ENABLE_RUNTIMES=libcxx `
@@ -130,7 +142,9 @@ jobs:
           }
           Copy-Item -Recurse cmake "$dest/cmake"
 
+      # Verify only on x64 (can't run ARM64 binaries on x64 runner)
       - name: Verify (Release)
+        if: matrix.arch == 'x64'
         shell: pwsh
         run: |
           cmake -G Ninja -S test_project -B test_project/build_rel `
@@ -140,6 +154,7 @@ jobs:
           ./test_project/build_rel/test_static.exe
 
       - name: Verify (Debug)
+        if: matrix.arch == 'x64'
         shell: pwsh
         run: |
           cmake -G Ninja -S test_project -B test_project/build_dbg `
@@ -152,14 +167,14 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          $zip = "libcxx-${{ env.LLVM_VER }}-windows-x64-${{ env.NS }}.zip"
+          $zip = "libcxx-${{ env.LLVM_VER }}-windows-${{ env.ARCH }}-${{ env.NS }}.zip"
           Compress-Archive -Path install/pkg/* -DestinationPath $zip
           "zip_name=$zip" >> $env:GITHUB_OUTPUT
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libcxx-x64-${{ env.NS }}
+          name: libcxx-${{ env.ARCH }}-${{ env.NS }}
           path: ${{ steps.package.outputs.zip_name }}
 
   release:
@@ -179,32 +194,21 @@ jobs:
           body: |
             ## libc++ ${{ needs.resolve.outputs.llvm_version }} for Windows
 
-            Pre-built LLVM libc++ for Windows x64 (Debug + Release).
-            Each zip corresponds to a different ABI inline namespace.
+            Pre-built LLVM libc++ for Windows (Debug + Release).
+
+            | Architecture | Platforms |
+            |---|---|
+            | x64 | Intel/AMD 64-bit |
+            | arm64 | ARM64 / Snapdragon / Windows on ARM |
+
+            Each zip corresponds to a specific architecture + ABI namespace.
 
             ### Quick Start
 
             ```cmake
-            # Option A — local
             set(LIBCXX_ROOT "path/to/extracted-zip")
             include(path/to/cmake/use-libcxx.cmake)
             use_libcxx_globally()
-
-            # Option B — auto-download from this repo
-            set(LIBCXX_GITHUB_REPO "${{ github.repository }}")
-            set(LIBCXX_ABI_NAMESPACE "__1")   # pick the namespace you need
-            include(path/to/cmake/use-libcxx.cmake)
-            use_libcxx_globally()
-            ```
-
-            ### Contents per zip
-            ```
-            include/c++/v1/     — libc++ headers
-            lib/Release/        — Release libraries
-            lib/Debug/          — Debug libraries
-            bin/Release/        — Release DLL
-            bin/Debug/          — Debug DLL
-            cmake/              — CMake integration
             ```
 
             Built from LLVM `${{ needs.resolve.outputs.llvm_tag }}`
