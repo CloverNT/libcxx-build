@@ -13,7 +13,7 @@ on:
       abi_namespaces:
         description: 'ABI namespaces to build (JSON array, e.g. ["__1","__myns"])'
         required: false
-        default: '["__1"]'
+        default: '["__qq", "__Cr"]'
 
 permissions:
   contents: write
@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           RAW='${{ inputs.abi_namespaces }}'
-          if [ -z "$RAW" ]; then RAW='["__1"]'; fi
+          if [ -z "$RAW" ]; then RAW='["__qq", "__Cr"]'; fi
           echo "matrix={\"abi_namespace\":$RAW}" >> "$GITHUB_OUTPUT"
 
   build:
