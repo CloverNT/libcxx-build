@@ -7,4 +7,4 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/use-libcxx.cmake)
 
 add_executable(test_static main.cpp)
-target_use_libcxx(test_static)
+TargetUseLibCxx(test_static)
