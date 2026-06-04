@@ -8,32 +8,32 @@
 # ---- Providing libc++ -------------------------------------------------------
 #
 #   Option A — local install (fastest, no network):
-#     set(LibCxxRoot "C:/libcxx-windows-x64")
+#     set(LIBCXX_ROOT "C:/libcxx-windows-x64")
 #
 #   Option B — auto-download from a GitHub Release:
-#     set(LibCxxGitHubRepo "owner/repo")          # required
-#     # set(LibCxxVersion  "latest")               # or a tag, e.g. "v20.1.6"
-#     # set(LibCxxDownloadDir "...")               # optional cache dir
+#     set(LIBCXX_GITHUB_REPO "owner/repo")          # required
+#     # set(LIBCXX_VERSION  "latest")                # or a tag, e.g. "v20.1.6"
+#     # set(LIBCXX_DOWNLOAD_DIR "...")               # optional cache dir
 #
 #   Option C — from the release zip (auto-detected when this file is inside the
 #              zip at  <root>/cmake/use-libcxx.cmake):
-#     # nothing to set — LibCxxRoot is inferred automatically.
+#     # nothing to set — LIBCXX_ROOT is inferred automatically.
 #
 # ---- Using libc++ -----------------------------------------------------------
 #
 #   # After project(), include this file, then either:
 #   include(path/to/use-libcxx.cmake)
-#   UseLibCxxGlobally()                   # applies to every target
+#   use_libcxx_globally()                   # applies to every target
 #
 #   # …or per target:
 #   include(path/to/use-libcxx.cmake)
-#   TargetUseLibCxx(my_target)            # applies to one target
+#   target_use_libcxx(my_target)            # applies to one target
 #
 # ---- Other variables ---------------------------------------------------------
 #
-#   LibCxxLinkType      — "static" (default) or "shared"
-#   LibCxxAbiNamespace  — inline namespace to match when auto-downloading
-#                         (e.g. "__1", "__myns").  Default: "__1".
+#   LIBCXX_LINK_TYPE      — "static" (default) or "shared"
+#   LIBCXX_ABI_NAMESPACE  — inline namespace to match when auto-downloading
+#                           (e.g. "__1", "__myns").  Default: "__1".
 #
 
 cmake_minimum_required(VERSION 3.20)
@@ -42,14 +42,14 @@ cmake_minimum_required(VERSION 3.20)
 # 1. Auto-download helpers
 # =============================================================================
 
-function(_LibCxx_QueryGitHubRelease repo version abi_ns out_url out_tag)
+function(_libcxx_query_github_release repo version abi_ns out_url out_tag)
     if("${version}" STREQUAL "" OR "${version}" STREQUAL "latest")
         set(_api "https://api.github.com/repos/${repo}/releases/latest")
     else()
         set(_api "https://api.github.com/repos/${repo}/releases/tags/${version}")
     endif()
 
-    set(_json_file "${LibCxxDownloadDir}/_release_info.json")
+    set(_json_file "${LIBCXX_DOWNLOAD_DIR}/_release_info.json")
     file(DOWNLOAD "${_api}" "${_json_file}"
         STATUS _st
         HTTPHEADER "Accept: application/vnd.github.v3+json"
@@ -57,15 +57,16 @@ function(_LibCxx_QueryGitHubRelease repo version abi_ns out_url out_tag)
     list(GET _st 0 _code)
     if(NOT _code EQUAL 0)
         list(GET _st 1 _msg)
-        message(FATAL_ERROR "[LibCxx] GitHub API error (${_api}): ${_msg}")
+        message(FATAL_ERROR "[use-libcxx] GitHub API error (${_api}): ${_msg}")
     endif()
 
     file(READ "${_json_file}" _json)
     string(JSON _tag GET "${_json}" "tag_name")
 
+    # Match asset:  libcxx-<ver>-windows-x64-<namespace>.zip
     string(JSON _n LENGTH "${_json}" "assets")
     if(_n EQUAL 0)
-        message(FATAL_ERROR "[LibCxx] Release ${_tag} has no assets")
+        message(FATAL_ERROR "[use-libcxx] Release ${_tag} has no assets")
     endif()
     math(EXPR _last "${_n} - 1")
     set(_found FALSE)
@@ -81,79 +82,84 @@ function(_LibCxx_QueryGitHubRelease repo version abi_ns out_url out_tag)
     endforeach()
     if(NOT _found)
         message(FATAL_ERROR
-            "[LibCxx] No asset matching namespace '${abi_ns}' in release ${_tag}.\n"
+            "[use-libcxx] No asset matching namespace '${abi_ns}' in release ${_tag}.\n"
             "Available assets can be viewed at:\n"
             "  https://github.com/${repo}/releases/tag/${_tag}")
     endif()
 endfunction()
 
-macro(_LibCxx_AutoDownload)
-    if(NOT DEFINED LibCxxDownloadDir)
-        set(LibCxxDownloadDir "${CMAKE_BINARY_DIR}/_deps/libcxx")
+macro(_libcxx_auto_download)
+    if(NOT DEFINED LIBCXX_DOWNLOAD_DIR)
+        set(LIBCXX_DOWNLOAD_DIR "${CMAKE_BINARY_DIR}/_deps/libcxx")
     endif()
-    if(NOT DEFINED LibCxxAbiNamespace)
-        set(LibCxxAbiNamespace "__1")
+    if(NOT DEFINED LIBCXX_ABI_NAMESPACE)
+        set(LIBCXX_ABI_NAMESPACE "__1")
     endif()
-    file(MAKE_DIRECTORY "${LibCxxDownloadDir}")
+    file(MAKE_DIRECTORY "${LIBCXX_DOWNLOAD_DIR}")
 
-    _LibCxx_QueryGitHubRelease(
-        "${LibCxxGitHubRepo}" "${LibCxxVersion}"
-        "${LibCxxAbiNamespace}" _dl_url _dl_tag)
+    _libcxx_query_github_release(
+        "${LIBCXX_GITHUB_REPO}" "${LIBCXX_VERSION}"
+        "${LIBCXX_ABI_NAMESPACE}" _dl_url _dl_tag)
 
-    set(_cache "${LibCxxDownloadDir}/${_dl_tag}-${LibCxxAbiNamespace}")
+    set(_cache "${LIBCXX_DOWNLOAD_DIR}/${_dl_tag}-${LIBCXX_ABI_NAMESPACE}")
 
     if(NOT EXISTS "${_cache}/include/c++/v1/__config")
-        set(_zip "${LibCxxDownloadDir}/_libcxx_${_dl_tag}.zip")
+        set(_zip "${LIBCXX_DOWNLOAD_DIR}/_libcxx_${_dl_tag}.zip")
         file(DOWNLOAD "${_dl_url}" "${_zip}" STATUS _st SHOW_PROGRESS)
         list(GET _st 0 _code)
         if(NOT _code EQUAL 0)
             list(GET _st 1 _msg)
             file(REMOVE "${_zip}")
-            message(FATAL_ERROR "[LibCxx] Download failed: ${_msg}")
+            message(FATAL_ERROR "[use-libcxx] Download failed: ${_msg}")
         endif()
         file(ARCHIVE_EXTRACT INPUT "${_zip}" DESTINATION "${_cache}")
         file(REMOVE "${_zip}")
     endif()
 
-    set(LibCxxRoot "${_cache}")
+    set(LIBCXX_ROOT "${_cache}")
 endmacro()
 
 # =============================================================================
-# 2. Resolve LibCxxRoot
+# 2. Resolve LIBCXX_ROOT
 # =============================================================================
 
-if(NOT DEFINED LibCxxRoot)
+# 2a. Explicit from the user — nothing to do.
+
+# 2b. Auto-detect when this file sits inside a release zip.
+if(NOT DEFINED LIBCXX_ROOT)
     get_filename_component(_use_libcxx_dir "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
     get_filename_component(_use_libcxx_parent "${_use_libcxx_dir}/.." ABSOLUTE)
     if(EXISTS "${_use_libcxx_parent}/include/c++/v1/__config")
-        set(LibCxxRoot "${_use_libcxx_parent}")
+        set(LIBCXX_ROOT "${_use_libcxx_parent}")
     endif()
     unset(_use_libcxx_dir)
     unset(_use_libcxx_parent)
 endif()
 
-if((NOT DEFINED LibCxxRoot OR NOT EXISTS "${LibCxxRoot}/include/c++/v1/__config")
-   AND DEFINED LibCxxGitHubRepo)
-    _LibCxx_AutoDownload()
+# 2c. Auto-download from GitHub.
+if((NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
+   AND DEFINED LIBCXX_GITHUB_REPO)
+    _libcxx_auto_download()
 endif()
 
-if(NOT DEFINED LibCxxRoot OR NOT EXISTS "${LibCxxRoot}/include/c++/v1/__config")
+# 2d. Validate.
+if(NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
     message(FATAL_ERROR
-        "[LibCxx] LibCxxRoot is not set or invalid.\n"
+        "LIBCXX_ROOT is not set or invalid.\n"
         "Either:\n"
-        "  -DLibCxxRoot=path/to/libcxx-windows-x64\n"
-        "  -DLibCxxGitHubRepo=owner/repo          (auto-download)\n"
-        "  -DLibCxxGitHubRepo=owner/repo -DLibCxxVersion=v20.1.6")
+        "  -DLIBCXX_ROOT=path/to/libcxx-windows-x64\n"
+        "  -DLIBCXX_GITHUB_REPO=owner/repo          (auto-download)\n"
+        "  -DLIBCXX_GITHUB_REPO=owner/repo -DLIBCXX_VERSION=v20.1.6")
 endif()
 
-file(TO_CMAKE_PATH "${LibCxxRoot}" LibCxxRoot)
+file(TO_CMAKE_PATH "${LIBCXX_ROOT}" LIBCXX_ROOT)
 
 # =============================================================================
 # 3. Defaults
 # =============================================================================
 
-if(NOT DEFINED LibCxxLinkType)
-    set(LibCxxLinkType "static")
+if(NOT DEFINED LIBCXX_LINK_TYPE)
+    set(LIBCXX_LINK_TYPE "static")
 endif()
 
 # =============================================================================
@@ -162,11 +168,11 @@ endif()
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR
-        "[LibCxx] libc++ requires Clang.  "
+        "[use-libcxx] libc++ requires Clang.  "
         "Current compiler: ${CMAKE_CXX_COMPILER_ID} (${CMAKE_CXX_COMPILER})\n"
         "Use one of:\n"
-        "  cmake -DCMAKE_CXX_COMPILER=clang-cl ...\n"
-        "  cmake -DCMAKE_CXX_COMPILER=clang++ ...")
+        "  cmake -DCMAKE_CXX_COMPILER=clang-cl ...   (MSVC-compatible, ships with Visual Studio)\n"
+        "  cmake -DCMAKE_CXX_COMPILER=clang++ ...     (GNU-style)")
 endif()
 
 if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
@@ -175,33 +181,40 @@ else()
     set(_LIBCXX_COMPILER "clang")
 endif()
 
+# Config-dependent subdirectory (works with single- and multi-config generators)
 set(_LIBCXX_CFG "$<IF:$<CONFIG:Debug>,Debug,Release>")
 
 # =============================================================================
 # 5. Per-target function
 # =============================================================================
 
-function(TargetUseLibCxx target)
+function(target_use_libcxx target)
+    # ---- headers + nostdinc++ ----
     if(_LIBCXX_COMPILER STREQUAL "clang-cl")
         target_compile_options(${target} PRIVATE
             "SHELL:/clang:-nostdinc++"
-            "/I${LibCxxRoot}/include/c++/v1")
-    else()
+            "/I${LIBCXX_ROOT}/include/c++/v1")
+    else()  # clang (GNU-style)
         target_compile_options(${target} PRIVATE
             -nostdinc++
-            "-I${LibCxxRoot}/include/c++/v1")
+            "-I${LIBCXX_ROOT}/include/c++/v1")
     endif()
 
+    # ---- compile definitions ----
     target_compile_definitions(${target} PRIVATE
         _CRT_STDIO_ISO_WIDE_SPECIFIERS)
 
+    # ---- link directories (config-aware) ----
     target_link_directories(${target} PRIVATE
-        "${LibCxxRoot}/lib/${_LIBCXX_CFG}")
+        "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
 
+    # MSVC C++ runtime helpers (exception_ptr etc.) are not auto-linked when
+    # MSVC STL headers are absent.  msvcprtd.lib for Debug, msvcprt.lib otherwise.
     target_link_libraries(${target} PRIVATE
         msvcprt$<$<CONFIG:Debug>:d>.lib)
 
-    if(LibCxxLinkType STREQUAL "shared")
+    # ---- static vs shared ----
+    if(LIBCXX_LINK_TYPE STREQUAL "shared")
         target_link_libraries(${target} PRIVATE c++.lib)
     else()
         target_compile_definitions(${target} PRIVATE
@@ -214,20 +227,20 @@ endfunction()
 # 6. Global convenience macro
 # =============================================================================
 
-macro(UseLibCxxGlobally)
+macro(use_libcxx_globally)
     if(_LIBCXX_COMPILER STREQUAL "clang-cl")
         add_compile_options("SHELL:/clang:-nostdinc++"
-                            "/I${LibCxxRoot}/include/c++/v1")
+                            "/I${LIBCXX_ROOT}/include/c++/v1")
     else()
         add_compile_options(-nostdinc++
-                            "-I${LibCxxRoot}/include/c++/v1")
+                            "-I${LIBCXX_ROOT}/include/c++/v1")
     endif()
 
     add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS)
-    link_directories("${LibCxxRoot}/lib/${_LIBCXX_CFG}")
+    link_directories("${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
     link_libraries(msvcprt$<$<CONFIG:Debug>:d>.lib)
 
-    if(LibCxxLinkType STREQUAL "shared")
+    if(LIBCXX_LINK_TYPE STREQUAL "shared")
         link_libraries(c++.lib)
     else()
         add_compile_definitions(_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
