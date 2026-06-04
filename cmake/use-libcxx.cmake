@@ -223,8 +223,11 @@ function(target_use_libcxx target)
     target_link_directories(${target} PRIVATE
         "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
 
-    target_link_libraries(${target} PRIVATE
-        msvcprt$<$<CONFIG:Debug>:d>.lib)
+    # Pull MSVC C++ runtime (exception_ptr helpers etc.) as a default lib so
+    # its symbols are lower priority than libc++'s — avoids "was replaced"
+    # conflicts on functions like std::uncaught_exceptions.
+    target_link_options(${target} PRIVATE
+        "/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
 
     if(LIBCXX_LINK_TYPE STREQUAL "shared")
         target_link_libraries(${target} PRIVATE libc++.lib)
@@ -250,7 +253,7 @@ macro(use_libcxx_globally)
 
     add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS _LIBCPP_NO_AUTO_LINK)
     link_directories("${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
-    link_libraries(msvcprt$<$<CONFIG:Debug>:d>.lib)
+    add_link_options("/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
 
     if(LIBCXX_LINK_TYPE STREQUAL "shared")
         link_libraries(libc++.lib)
