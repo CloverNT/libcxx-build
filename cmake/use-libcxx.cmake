@@ -217,7 +217,8 @@ function(target_use_libcxx target)
     endif()
 
     target_compile_definitions(${target} PRIVATE
-        _CRT_STDIO_ISO_WIDE_SPECIFIERS)
+        _CRT_STDIO_ISO_WIDE_SPECIFIERS
+        _LIBCPP_NO_AUTO_LINK)
 
     target_link_directories(${target} PRIVATE
         "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
@@ -226,11 +227,11 @@ function(target_use_libcxx target)
         msvcprt$<$<CONFIG:Debug>:d>.lib)
 
     if(LIBCXX_LINK_TYPE STREQUAL "shared")
-        target_link_libraries(${target} PRIVATE c++.lib)
+        target_link_libraries(${target} PRIVATE libc++.lib)
     else()
         target_compile_definitions(${target} PRIVATE
             _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
-        target_link_libraries(${target} PRIVATE libc++.lib)
+        target_link_libraries(${target} PRIVATE libc++_static.lib)
     endif()
 endfunction()
 
@@ -247,14 +248,14 @@ macro(use_libcxx_globally)
                             "-I${LIBCXX_ROOT}/include/c++/v1")
     endif()
 
-    add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS)
+    add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS _LIBCPP_NO_AUTO_LINK)
     link_directories("${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
     link_libraries(msvcprt$<$<CONFIG:Debug>:d>.lib)
 
     if(LIBCXX_LINK_TYPE STREQUAL "shared")
-        link_libraries(c++.lib)
+        link_libraries(libc++.lib)
     else()
         add_compile_definitions(_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
-        link_libraries(libc++.lib)
+        link_libraries(libc++_static.lib)
     endif()
 endmacro()

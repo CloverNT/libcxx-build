@@ -88,7 +88,9 @@ jobs:
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON `
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF `
             -DLLVM_INCLUDE_TESTS=OFF `
-            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}"
+            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" `
+            -DLIBCXX_SHARED_OUTPUT_NAME=libc++ `
+            -DLIBCXX_STATIC_OUTPUT_NAME=libc++_static
           cmake --build build/Release --config Release
           cmake --install build/Release --config Release
 
@@ -104,7 +106,9 @@ jobs:
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON `
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF `
             -DLLVM_INCLUDE_TESTS=OFF `
-            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}"
+            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" `
+            -DLIBCXX_SHARED_OUTPUT_NAME=libc++ `
+            -DLIBCXX_STATIC_OUTPUT_NAME=libc++_static
           cmake --build build/Debug --config Debug
           cmake --install build/Debug --config Debug
 
@@ -131,7 +135,7 @@ jobs:
         run: |
           cmake -G Ninja -S test_project -B test_project/build_rel `
             -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release `
-            -DLibCxxRoot=${{ github.workspace }}/install/pkg
+            -DLIBCXX_ROOT=${{ github.workspace }}/install/pkg
           cmake --build test_project/build_rel --config Release
           ./test_project/build_rel/test_static.exe
 
@@ -140,7 +144,7 @@ jobs:
         run: |
           cmake -G Ninja -S test_project -B test_project/build_dbg `
             -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Debug `
-            -DLibCxxRoot=${{ github.workspace }}/install/pkg
+            -DLIBCXX_ROOT=${{ github.workspace }}/install/pkg
           cmake --build test_project/build_dbg --config Debug
           ./test_project/build_dbg/test_static.exe
 

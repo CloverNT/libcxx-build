@@ -117,6 +117,8 @@ foreach ($config in $configs) {
         "-DLIBCXX_INCLUDE_TESTS=OFF"
         "-DLLVM_INCLUDE_TESTS=OFF"
         "-DLIBCXX_ABI_NAMESPACE=$ABINamespace"
+        "-DLIBCXX_SHARED_OUTPUT_NAME=libc++"
+        "-DLIBCXX_STATIC_OUTPUT_NAME=libc++_static"
     )
 
     & cmake @cmakeArgs
