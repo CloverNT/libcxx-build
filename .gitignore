@@ -1,0 +1,5 @@
+build/
+install/
+llvm-project/
+test_project/build*/
+*.zip
