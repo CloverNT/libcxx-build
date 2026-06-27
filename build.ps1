@@ -37,7 +37,6 @@ $INSTALL_DIR = "$ROOT\install\libcxx-windows-$Arch-$ABINamespace"
 
 function Write-Step([string]$msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
-# ---------- Resolve "latest" tag ----------
 if ($LLVMTag -eq "latest") {
     Write-Step "Resolving latest LLVM release"
     $release = Invoke-RestMethod "https://api.github.com/repos/llvm/llvm-project/releases/latest"
@@ -47,15 +46,12 @@ if ($LLVMTag -eq "latest") {
 
 $LLVMVersion = $LLVMTag -replace '^llvmorg-', ''
 
-# ---------- Find Visual Studio ----------
 Write-Step "Finding Visual Studio"
 $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path $vsWhere)) { throw "vswhere.exe not found - install Visual Studio." }
 $VS_PATH = (& $vsWhere -latest -property installationPath).Trim()
 Write-Host "VS path: $VS_PATH"
 
-# ---------- Set up MSVC developer environment ----------
-# For ARM64 cross-compilation from x64 host, use amd64_arm64
 $vcArch = if ($Arch -eq "arm64") { "amd64_arm64" } else { $Arch }
 Write-Step "Setting up MSVC environment ($vcArch)"
 $vcvarsall = "$VS_PATH\VC\Auxiliary\Build\vcvarsall.bat"
@@ -69,7 +65,6 @@ foreach ($line in $envLines) {
 }
 Write-Host "MSVC developer environment loaded."
 
-# ---------- Locate compilers ----------
 $CLANG_CL = "$VS_PATH\VC\Tools\Llvm\x64\bin\clang-cl.exe"
 if (-not (Test-Path $CLANG_CL)) {
     $CLANG_CL = (Get-Command clang-cl -ErrorAction SilentlyContinue).Source
@@ -78,13 +73,11 @@ if (-not $CLANG_CL) { throw "clang-cl not found" }
 Write-Host "Compiler: $CLANG_CL"
 & $CLANG_CL --version
 
-# ---------- Cross-compilation target ----------
 $targetTriple = switch ($Arch) {
     "arm64" { "aarch64-pc-windows-msvc" }
     default { "x86_64-pc-windows-msvc" }
 }
 
-# ---------- Clone LLVM ----------
 if (-not $SkipClone) {
     Write-Step "Cloning LLVM ($LLVMTag)"
     if ($Clean -and (Test-Path $SOURCE_DIR)) {
@@ -99,7 +92,6 @@ if (-not $SkipClone) {
     }
 }
 
-# ---------- Build both configurations ----------
 $configs = @("Release", "Debug")
 
 foreach ($config in $configs) {
@@ -145,7 +137,6 @@ foreach ($config in $configs) {
     if ($LASTEXITCODE -ne 0) { throw "Install ($config) failed" }
 }
 
-# ---------- Merge into final multi-config layout ----------
 Write-Step "Merging into multi-config layout"
 if (Test-Path $INSTALL_DIR) { Remove-Item -Recurse -Force $INSTALL_DIR }
 New-Item -ItemType Directory -Path $INSTALL_DIR -Force | Out-Null
@@ -171,7 +162,6 @@ foreach ($config in $configs) {
     Remove-Item -Recurse -Force "$ROOT\install\_temp_${Arch}_$config"
 }
 
-# ---------- Package ----------
 if ($Package) {
     Write-Step "Packaging"
     $zipName = "libcxx-$LLVMVersion-windows-$Arch-$ABINamespace.zip"

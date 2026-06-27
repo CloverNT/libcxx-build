@@ -1,4 +1,4 @@
-name: Build and Release libc++ for Windows
+name: Build and Release libc++
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
           if [ -z "$RAW" ]; then RAW='["__qq", "__Cr"]'; fi
           echo "matrix={\"arch\":[\"x64\",\"arm64\"],\"abi_namespace\":$RAW}" >> "$GITHUB_OUTPUT"
 
-  build:
+  build-windows:
     needs: resolve
     runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-latest' }}
     strategy:
@@ -172,44 +172,160 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libcxx-${{ env.ARCH }}-${{ env.NS }}
+          name: libcxx-windows-${{ env.ARCH }}-${{ env.NS }}
           path: ${{ steps.package.outputs.zip_name }}
 
+  build-linux:
+    needs: resolve
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+
+    env:
+      LLVM_TAG: ${{ needs.resolve.outputs.llvm_tag }}
+      LLVM_VER: ${{ needs.resolve.outputs.llvm_version }}
+      NS: ${{ matrix.abi_namespace }}
+      ARCH: ${{ matrix.arch }}
+      TARGET_TRIPLE: ${{ matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 22 and Ninja
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y ninja-build
+          clang-22 --version
+          clang++-22 --version
+
+      - name: Clone LLVM source
+        run: |
+          git clone --depth 1 --branch "${{ env.LLVM_TAG }}" \
+            https://github.com/llvm/llvm-project.git llvm-project
+
+      - name: Build Release
+        run: |
+          cmake -G Ninja \
+            -S llvm-project/runtimes -B build/Release \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            "-DCMAKE_C_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
+            "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Release" \
+            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi" \
+            -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
+            -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" \
+            -DLIBCXXABI_ENABLE_SHARED=ON -DLIBCXXABI_ENABLE_STATIC=ON \
+            -DLIBCXXABI_INCLUDE_TESTS=OFF
+          cmake --build build/Release --parallel $(nproc)
+          cmake --install build/Release
+
+      - name: Build Debug
+        run: |
+          cmake -G Ninja \
+            -S llvm-project/runtimes -B build/Debug \
+            -DCMAKE_C_COMPILER=clang-22 \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            "-DCMAKE_C_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
+            "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
+            -DCMAKE_BUILD_TYPE=Debug \
+            "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Debug" \
+            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi" \
+            -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
+            -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" \
+            -DLIBCXXABI_ENABLE_SHARED=ON -DLIBCXXABI_ENABLE_STATIC=ON \
+            -DLIBCXXABI_INCLUDE_TESTS=OFF
+          cmake --build build/Debug --parallel $(nproc)
+          cmake --install build/Debug
+
+      - name: Merge into multi-config layout
+        run: |
+          INST="${{ github.workspace }}/install"
+          DEST="$INST/pkg"
+          mkdir -p "$DEST"
+          cp -r "$INST/_temp_Release/include" "$DEST/include"
+          for cfg in Release Debug; do
+            mkdir -p "$DEST/lib/$cfg"
+            cp -r "$INST/_temp_$cfg/lib/." "$DEST/lib/$cfg/"
+          done
+          cp -r cmake "$DEST/cmake"
+
+      - name: Verify (Release)
+        run: |
+          cmake -G Ninja -S test_project -B test_project/build_rel \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_BUILD_TYPE=Release \
+            "-DLIBCXX_ROOT=${{ github.workspace }}/install/pkg"
+          cmake --build test_project/build_rel
+          ./test_project/build_rel/test_static
+
+      - name: Verify (Debug)
+        run: |
+          cmake -G Ninja -S test_project -B test_project/build_dbg \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            "-DLIBCXX_ROOT=${{ github.workspace }}/install/pkg"
+          cmake --build test_project/build_dbg
+          ./test_project/build_dbg/test_static
+
+      - name: Package
+        id: package
+        run: |
+          TARBALL="libcxx-${{ env.LLVM_VER }}-linux-${{ env.ARCH }}-${{ env.NS }}.tar.gz"
+          tar -czf "${{ github.workspace }}/$TARBALL" -C "${{ github.workspace }}/install/pkg" .
+          echo "tarball_name=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcxx-linux-${{ env.ARCH }}-${{ env.NS }}
+          path: ${{ steps.package.outputs.tarball_name }}
+
   release:
-    needs: [resolve, build]
+    needs: [resolve, build-windows, build-linux]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/download-artifact@v4
 
-      - name: Collect zips
-        run: find . -name '*.zip' -exec mv {} . \;
+      - name: Collect archives
+        run: find . -mindepth 2 \( -name '*.zip' -o -name '*.tar.gz' \) -exec mv {} . \;
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: libc++ ${{ needs.resolve.outputs.llvm_version }}
           body: |
-            ## libc++ ${{ needs.resolve.outputs.llvm_version }} for Windows
+            ## libc++ ${{ needs.resolve.outputs.llvm_version }}
 
-            Pre-built LLVM libc++ for Windows (Debug + Release).
+            Pre-built LLVM libc++ for Windows and Linux (Debug + Release, static + shared).
 
-            | Architecture | Platforms |
+            | Platform | Architecture |
             |---|---|
-            | x64 | Intel/AMD 64-bit |
-            | arm64 | ARM64 / Snapdragon / Windows on ARM |
+            | Windows | x64, arm64 |
+            | Linux   | x64, arm64 |
 
-            Each zip corresponds to a specific architecture + ABI namespace.
+            Each archive corresponds to a specific platform + architecture + ABI namespace.
 
             ### Quick Start
 
             ```cmake
-            set(LIBCXX_ROOT "path/to/extracted-zip")
+            set(LIBCXX_ROOT "path/to/extracted-archive")
             include(path/to/cmake/use-libcxx.cmake)
             use_libcxx_globally()
             ```
 
             Built from LLVM `${{ needs.resolve.outputs.llvm_tag }}`
-          files: "*.zip"
+          files: |
+            *.zip
+            *.tar.gz
           draft: false
           prerelease: false

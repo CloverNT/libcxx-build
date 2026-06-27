@@ -1,47 +1,4 @@
-# use-libcxx.cmake
-#
-# CMake integration for using LLVM libc++ on Windows.
-# Requires Clang (clang-cl or clang++).  Any other compiler is rejected.
-#
-# Automatically selects Debug/Release libraries from CMAKE_BUILD_TYPE / $<CONFIG>.
-#
-# ---- Providing libc++ -------------------------------------------------------
-#
-#   Option A — set LIBCXX_ROOT explicitly:
-#     set(LIBCXX_ROOT "C:/libcxx-windows-x64")
-#
-#   Option B — auto-download from a GitHub Release (downloaded once, cached):
-#     set(LIBCXX_GITHUB_REPO "owner/repo")
-#     # set(LIBCXX_VERSION       "latest")    # or a tag, e.g. "v20.1.6"
-#     # set(LIBCXX_ABI_NAMESPACE "__1")       # namespace to match in asset name
-#     # set(LIBCXX_DOWNLOAD_DIR  "...")        # cache dir (default: build/_deps/libcxx)
-#
-#   Option C — from the release zip (auto-detected when this file is inside the
-#              zip at  <root>/cmake/use-libcxx.cmake):
-#     # nothing to set — LIBCXX_ROOT is inferred automatically.
-#
-# ---- Using libc++ -----------------------------------------------------------
-#
-#   # After project(), include this file, then either:
-#   include(path/to/use-libcxx.cmake)
-#   use_libcxx_globally()                   # applies to every target
-#
-#   # …or per target:
-#   include(path/to/use-libcxx.cmake)
-#   target_use_libcxx(my_target)            # applies to one target
-#
-# ---- Other variables ---------------------------------------------------------
-#
-#   LIBCXX_LINK_TYPE      — "static" (default) or "shared"
-#   LIBCXX_ABI_NAMESPACE  — namespace to match when downloading (default: "__1")
-#   LIBCXX_ARCH           — architecture for download matching (default: auto-detect)
-#
-
 cmake_minimum_required(VERSION 3.20)
-
-# =============================================================================
-# 1. Auto-download helpers (download once, reuse from cache on later runs)
-# =============================================================================
 
 function(_libcxx_query_github_release repo version arch abi_ns out_url out_tag)
     if("${version}" STREQUAL "" OR "${version}" STREQUAL "latest")
@@ -68,11 +25,19 @@ function(_libcxx_query_github_release repo version arch abi_ns out_url out_tag)
     if(_n EQUAL 0)
         message(FATAL_ERROR "[use-libcxx] Release ${_tag} has no assets")
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(_platform "windows")
+        set(_archive_pat "\\.zip$")
+    else()
+        set(_platform "linux")
+        set(_archive_pat "(\\.tar\\.gz|\\.tar\\.xz|\\.zip)$")
+    endif()
+
     math(EXPR _last "${_n} - 1")
     set(_found FALSE)
     foreach(_i RANGE 0 ${_last})
         string(JSON _name GET "${_json}" "assets" ${_i} "name")
-        if(_name MATCHES "windows-${arch}-${abi_ns}\\.zip$")
+        if(_name MATCHES "${_platform}-${arch}-${abi_ns}${_archive_pat}")
             string(JSON _dl GET "${_json}" "assets" ${_i} "browser_download_url")
             set(${out_url} "${_dl}" PARENT_SCOPE)
             set(${out_tag} "${_tag}" PARENT_SCOPE)
@@ -82,7 +47,7 @@ function(_libcxx_query_github_release repo version arch abi_ns out_url out_tag)
     endforeach()
     if(NOT _found)
         message(FATAL_ERROR
-            "[use-libcxx] No asset matching arch '${arch}' namespace '${abi_ns}' in release ${_tag}.\n"
+            "[use-libcxx] No asset matching platform '${_platform}' arch '${arch}' namespace '${abi_ns}' in release ${_tag}.\n"
             "Available assets can be viewed at:\n"
             "  https://github.com/${repo}/releases/tag/${_tag}")
     endif()
@@ -143,13 +108,7 @@ macro(_libcxx_auto_download)
     endif()
 endmacro()
 
-# =============================================================================
-# 2. Resolve LIBCXX_ROOT
-# =============================================================================
 
-# 2a. Explicit from the user — nothing to do.
-
-# 2b. Auto-detect when this file sits inside a release zip.
 if(NOT DEFINED LIBCXX_ROOT)
     get_filename_component(_use_libcxx_dir "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
     get_filename_component(_use_libcxx_parent "${_use_libcxx_dir}/.." ABSOLUTE)
@@ -160,35 +119,25 @@ if(NOT DEFINED LIBCXX_ROOT)
     unset(_use_libcxx_parent)
 endif()
 
-# 2c. Auto-download from GitHub (skipped entirely if cache is valid).
 if((NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
    AND DEFINED LIBCXX_GITHUB_REPO)
     _libcxx_auto_download()
 endif()
 
-# 2d. Validate.
 if(NOT DEFINED LIBCXX_ROOT OR NOT EXISTS "${LIBCXX_ROOT}/include/c++/v1/__config")
     message(FATAL_ERROR
         "[use-libcxx] LIBCXX_ROOT is not set or invalid.\n"
         "Either:\n"
-        "  -DLIBCXX_ROOT=path/to/libcxx-windows-x64\n"
+        "  -DLIBCXX_ROOT=path/to/libcxx-<platform>-x64\n"
         "  -DLIBCXX_GITHUB_REPO=owner/repo          (auto-download)\n"
         "  -DLIBCXX_GITHUB_REPO=owner/repo -DLIBCXX_VERSION=v20.1.6")
 endif()
 
 file(TO_CMAKE_PATH "${LIBCXX_ROOT}" LIBCXX_ROOT)
 
-# =============================================================================
-# 3. Defaults
-# =============================================================================
-
 if(NOT DEFINED LIBCXX_LINK_TYPE)
     set(LIBCXX_LINK_TYPE "static")
 endif()
-
-# =============================================================================
-# 4. Require Clang
-# =============================================================================
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     message(FATAL_ERROR
@@ -205,12 +154,7 @@ else()
     set(_LIBCXX_COMPILER "clang")
 endif()
 
-# Config-dependent subdirectory (works with single- and multi-config generators)
 set(_LIBCXX_CFG "$<IF:$<CONFIG:Debug>,Debug,Release>")
-
-# =============================================================================
-# 5. Per-target function
-# =============================================================================
 
 function(target_use_libcxx target)
     if(_LIBCXX_COMPILER STREQUAL "clang-cl")
@@ -223,31 +167,38 @@ function(target_use_libcxx target)
             "-I${LIBCXX_ROOT}/include/c++/v1")
     endif()
 
-    target_compile_definitions(${target} PRIVATE
-        _CRT_STDIO_ISO_WIDE_SPECIFIERS
-        _LIBCPP_NO_AUTO_LINK)
+    target_compile_definitions(${target} PRIVATE _LIBCPP_NO_AUTO_LINK)
 
     target_link_directories(${target} PRIVATE
         "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
 
-    # Pull MSVC C++ runtime (exception_ptr helpers etc.) as a default lib so
-    # its symbols are lower priority than libc++'s — avoids "was replaced"
-    # conflicts on functions like std::uncaught_exceptions.
-    target_link_options(${target} PRIVATE
-        "/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
-
-    if(LIBCXX_LINK_TYPE STREQUAL "shared")
-        target_link_libraries(${target} PRIVATE libc++.lib)
+    if(_LIBCXX_COMPILER STREQUAL "clang-cl")
+        target_compile_definitions(${target} PRIVATE _CRT_STDIO_ISO_WIDE_SPECIFIERS)
+        target_link_options(${target} PRIVATE
+            "/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
+        if(LIBCXX_LINK_TYPE STREQUAL "shared")
+            target_link_libraries(${target} PRIVATE libc++.lib)
+        else()
+            target_compile_definitions(${target} PRIVATE
+                _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
+            target_link_libraries(${target} PRIVATE libc++_static.lib)
+        endif()
     else()
-        target_compile_definitions(${target} PRIVATE
-            _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
-        target_link_libraries(${target} PRIVATE libc++_static.lib)
+        target_link_options(${target} PRIVATE -nostdlib++)
+        if(LIBCXX_LINK_TYPE STREQUAL "shared")
+            target_link_libraries(${target} PRIVATE c++ c++abi)
+            target_link_options(${target} PRIVATE
+                "LINKER:-rpath,${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
+        else()
+            target_compile_definitions(${target} PRIVATE
+                _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
+            target_link_libraries(${target} PRIVATE
+                "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}/libc++.a"
+                "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}/libc++abi.a")
+        endif()
+        target_link_libraries(${target} PRIVATE pthread dl)
     endif()
 endfunction()
-
-# =============================================================================
-# 6. Global convenience macro
-# =============================================================================
 
 macro(use_libcxx_globally)
     if(_LIBCXX_COMPILER STREQUAL "clang-cl")
@@ -258,14 +209,29 @@ macro(use_libcxx_globally)
                             "-I${LIBCXX_ROOT}/include/c++/v1")
     endif()
 
-    add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS _LIBCPP_NO_AUTO_LINK)
+    add_compile_definitions(_LIBCPP_NO_AUTO_LINK)
     link_directories("${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
-    add_link_options("/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
 
-    if(LIBCXX_LINK_TYPE STREQUAL "shared")
-        link_libraries(libc++.lib)
+    if(_LIBCXX_COMPILER STREQUAL "clang-cl")
+        add_compile_definitions(_CRT_STDIO_ISO_WIDE_SPECIFIERS)
+        add_link_options("/DEFAULTLIB:msvcprt$<$<CONFIG:Debug>:d>")
+        if(LIBCXX_LINK_TYPE STREQUAL "shared")
+            link_libraries(libc++.lib)
+        else()
+            add_compile_definitions(_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
+            link_libraries(libc++_static.lib)
+        endif()
     else()
-        add_compile_definitions(_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
-        link_libraries(libc++_static.lib)
+        add_link_options(-nostdlib++)
+        if(LIBCXX_LINK_TYPE STREQUAL "shared")
+            link_libraries(c++ c++abi)
+            add_link_options("LINKER:-rpath,${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}")
+        else()
+            add_compile_definitions(_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
+            link_libraries(
+                "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}/libc++.a"
+                "${LIBCXX_ROOT}/lib/${_LIBCXX_CFG}/libc++abi.a")
+        endif()
+        link_libraries(pthread dl)
     endif()
 endmacro()
