@@ -216,6 +216,7 @@ jobs:
             "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
             -DCMAKE_BUILD_TYPE=Release \
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Release" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind" \
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
@@ -238,6 +239,7 @@ jobs:
             "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
             -DCMAKE_BUILD_TYPE=Debug \
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Debug" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind" \
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
