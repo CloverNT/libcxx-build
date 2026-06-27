@@ -216,13 +216,15 @@ jobs:
             "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
             -DCMAKE_BUILD_TYPE=Release \
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Release" \
-            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi" \
+            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind" \
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
             -DLLVM_INCLUDE_TESTS=OFF \
             "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" \
             -DLIBCXXABI_ENABLE_SHARED=ON -DLIBCXXABI_ENABLE_STATIC=ON \
-            -DLIBCXXABI_INCLUDE_TESTS=OFF
+            -DLIBCXXABI_INCLUDE_TESTS=OFF \
+            -DLIBUNWIND_ENABLE_SHARED=ON -DLIBUNWIND_ENABLE_STATIC=ON \
+            -DLIBUNWIND_INCLUDE_TESTS=OFF
           cmake --build build/Release --parallel $(nproc)
           cmake --install build/Release
 
@@ -236,13 +238,15 @@ jobs:
             "-DCMAKE_CXX_COMPILER_TARGET=${{ env.TARGET_TRIPLE }}" \
             -DCMAKE_BUILD_TYPE=Debug \
             "-DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install/_temp_Debug" \
-            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi" \
+            "-DLLVM_ENABLE_RUNTIMES=libcxx;libcxxabi;libunwind" \
             -DLIBCXX_ENABLE_SHARED=ON -DLIBCXX_ENABLE_STATIC=ON \
             -DLIBCXX_INCLUDE_BENCHMARKS=OFF -DLIBCXX_INCLUDE_TESTS=OFF \
             -DLLVM_INCLUDE_TESTS=OFF \
             "-DLIBCXX_ABI_NAMESPACE=${{ env.NS }}" \
             -DLIBCXXABI_ENABLE_SHARED=ON -DLIBCXXABI_ENABLE_STATIC=ON \
-            -DLIBCXXABI_INCLUDE_TESTS=OFF
+            -DLIBCXXABI_INCLUDE_TESTS=OFF \
+            -DLIBUNWIND_ENABLE_SHARED=ON -DLIBUNWIND_ENABLE_STATIC=ON \
+            -DLIBUNWIND_INCLUDE_TESTS=OFF
           cmake --build build/Debug --parallel $(nproc)
           cmake --install build/Debug
 

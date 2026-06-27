@@ -111,7 +111,7 @@ for CONFIG in "${CONFIGS[@]}"; do
         -DCMAKE_CXX_COMPILER_TARGET="$TARGET_TRIPLE" \
         -DCMAKE_BUILD_TYPE="$CONFIG" \
         -DCMAKE_INSTALL_PREFIX="$TEMP_INSTALL" \
-        -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
+        -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi;libunwind" \
         -DLIBCXX_ENABLE_SHARED=ON \
         -DLIBCXX_ENABLE_STATIC=ON \
         -DLIBCXX_INCLUDE_BENCHMARKS=OFF \
@@ -120,7 +120,10 @@ for CONFIG in "${CONFIGS[@]}"; do
         -DLIBCXX_ABI_NAMESPACE="$ABI_NAMESPACE" \
         -DLIBCXXABI_ENABLE_SHARED=ON \
         -DLIBCXXABI_ENABLE_STATIC=ON \
-        -DLIBCXXABI_INCLUDE_TESTS=OFF
+        -DLIBCXXABI_INCLUDE_TESTS=OFF \
+        -DLIBUNWIND_ENABLE_SHARED=ON \
+        -DLIBUNWIND_ENABLE_STATIC=ON \
+        -DLIBUNWIND_INCLUDE_TESTS=OFF
 
     step "Building libc++ ($CONFIG)"
     cmake --build "$BUILD_DIR" --config "$CONFIG" --parallel "$(nproc)"
